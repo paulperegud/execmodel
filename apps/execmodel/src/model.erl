@@ -46,12 +46,14 @@ run(NS, NN) when NN =< NS ->
 -spec stats({[t()], [n()]}) -> map().
 stats({Subtasks, Nodes}) ->
     Finished = length(lists:filter(fun(T) -> st_status(T) == completed end, Subtasks)),
+    TOs = lists:flatten([ [ 1 || #h{res=Res} <- Hs, Res =:=xx ] || #t{h = Hs} <- Subtasks ]),
     #{wall => wall_time(Nodes),
       cpu => cpu_time(Subtasks),
       best => best(Nodes),
       worst => worst(Nodes),
       finished => Finished,
       failed => length(Subtasks) - Finished,
+      timeouts => length(TOs),
       total => length(Subtasks)
      }.
 
