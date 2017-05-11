@@ -61,10 +61,10 @@ stats({Subtasks, Nodes}) ->
 %% generators and rules %%
 %%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%% RULE: for second try set subtask timeout to 2.0
+%% RULE: on every timeout duplicate subtask deadline
 -spec st_timeout(t()) -> cpu_interval().
 st_timeout(#t{h = H}) ->
-    max(1.0, math:pow(2, length(H))).
+    1.5*(max(1.0, math:pow(2, length(H)))).
 
 %% RULE: retry subtask at most once
 st_status(#t{h = [#h{res=oo} | _]}) ->
@@ -79,12 +79,13 @@ handle_timeouted(Tasks, TOs) ->
     Tasks ++ TOs.
 
 %% generator: subtask is modeled as amount of CPU time needed to compute it
+%%            can be seen as number of hours for machine of performance 1.0
 st() ->
-    max(0.0, (rand:normal() + 1)).
+    max(0.0, (rand:normal() + 0.5)).
 
-%% generator: provider is modeled as its computational power: [1,0..3,0]
+%% generator: provider is modeled as its computational power: [0,5..1,5]
 prov() ->
-    2*(rand:uniform()) + 1.0.
+    rand:uniform() + 0.5.
 
 %%%%%%%%%%%%%%%
 %% internals %%
