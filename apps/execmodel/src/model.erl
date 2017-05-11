@@ -3,17 +3,27 @@
 %%%%%%%%%%%%%%%%
 %%%%% API %%%%%%
 %%%%%%%%%%%%%%%%
--export([run/2]).
+-export([run/2, stats/1]).
 
 -type id() :: pos_integer().
 -type res() :: oo | xx. %% oo - completed; xx - timeouted
--type work() :: float().
+-type work() :: float(). %% normalized amount of work per subtask
 -type perf() :: float().
+-type cpu_interval() :: float().
+
+-record(h, {
+          id :: id(),
+          perf = 0.0 :: perf(),
+          work = 0.0 :: work(),
+          cpu :: cpu_interval(),
+          res :: res()
+         }).
+-type h() :: #h{}.
 
 -record(t, {
           id :: id(),
           work :: work(),
-          h = [] :: [{id(), perf(), res()}]
+          h = [] :: [h()] %% history of the subtask
          }).
 -type t() :: #t{}.
 
@@ -22,25 +32,40 @@
           perf :: perf(), %% performance of the node
           task :: undefined | t(), %% current task
           r :: undefined | res(), %% result of current task
-          h = [] :: [{id(), work(), res()}], %% history
+          h = [] :: [h()], %% history of the node
           t :: undefined | float() %% time of end of current computation
          }).
+-type n() :: #n{}.
 
+-spec run(integer(), integer()) -> {[t()], [n()]}.
 run(NS, NN) when NN =< NS ->
     Nodes = [prov() || _ <- lists:seq(1, NN)],
     STs = [st() || _ <- lists:seq(1, NS)],
     exec(Nodes, STs).
+
+-spec stats({[t()], [n()]}) -> map().
+stats({Subtasks, Nodes}) ->
+    Finished = length(lists:filter(fun(T) -> st_status(T) == completed end, Subtasks)),
+    #{wall => wall_time(Nodes),
+      cpu => cpu_time(Subtasks),
+      best => best(Nodes),
+      worst => worst(Nodes),
+      finished => Finished,
+      failed => length(Subtasks) - Finished,
+      total => length(Subtasks)
+     }.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%
 %% generators and rules %%
 %%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %% RULE: for second try set subtask timeout to 2.0
+-spec st_timeout(t()) -> cpu_interval().
 st_timeout(#t{h = H}) ->
     max(1.0, math:pow(2, length(H))).
 
 %% RULE: retry subtask at most once
-st_status(#t{h = [{_, _, oo} | _]}) ->
+st_status(#t{h = [#h{res=oo} | _]}) ->
     completed;
 st_status(#t{h = H}) when length(H) < 2 ->
     timeouted;
@@ -53,11 +78,11 @@ handle_timeouted(Tasks, TOs) ->
 
 %% generator: subtask is modeled as amount of CPU time needed to compute it
 st() ->
-    max(0, (rand:normal() + 1)).
+    max(0.0, (rand:normal() + 1)).
 
-%% generator: provider is modeled as its computational power: [1,0..2,0]
+%% generator: provider is modeled as its computational power: [1,0..3,0]
 prov() ->
-    rand:uniform() + 1.
+    2*(rand:uniform()) + 1.0.
 
 %%%%%%%%%%%%%%%
 %% internals %%
@@ -106,11 +131,9 @@ finalize_execs(Nodes) ->
         end,
     {Finishing, Working} = lists:partition(IsFree, Nodes),
     R = [ begin
-              #t{h = H} = T,
-              T1 = T#t{h = [{NId, Perf, R} | H]},
               N1 = N#n{task = undefined, r = undefined, t = undefined},
-              {T1, N1}
-          end || N = #n{id = NId, perf = Perf, task = T, r = R} <- Finishing ],
+              {T, N1}
+          end || N = #n{task = T} <- Finishing ],
     {ComplExecs, FreeProviders} = lists:unzip(R),
     {Finished, Other} = lists:partition(fun(T) -> st_status(T) == completed end, ComplExecs),
     {Timeouted, Failed} = lists:partition(fun(T) -> st_status(T) == timeouted end, Other),
@@ -119,18 +142,22 @@ finalize_execs(Nodes) ->
 project(Nodes) ->
     lists:map(fun schedule_work/1, Nodes).
 
-schedule_work(N = #n{perf = Perf, task = Task,
-                     t = undefined, h = H}) ->
-    #t{id = TId, work = Work} = Task,
+schedule_work(N = #n{perf = Perf, task = Task, id = NId,
+                     t = undefined, h = NodeHistory}) ->
+    #t{id = TId, work = Work, h = TaskHistory} = Task,
     T = Work / Perf,
-    case T > st_timeout(Task) of
-        true ->
-            NH = {TId, Work, xx},
-            N#n{t = st_timeout(Task), r = xx, h = [NH | H]};
-        false ->
-            NH = {TId, Work, oo},
-            N#n{t = T, r = oo, h = [NH | H]}
-    end;
+    Timeout = st_timeout(Task),
+    {Res, CPU}
+        = case T > Timeout of
+              true ->
+                  {xx, Timeout};
+              false ->
+                  {oo, T}
+          end,
+    NH = #h{id=NId, work=Work, cpu=CPU, res=Res},
+    TH = #h{id=TId, perf=Perf, cpu=CPU, res=Res},
+    Task1 = Task#t{h = [TH | TaskHistory]},
+    N#n{t = CPU, task = Task1, r = Res, h = [NH | NodeHistory]};
 schedule_work(N = #n{task = #t{id = _Id}}) ->
     N.
 
@@ -143,3 +170,27 @@ assign([], STs, Busy) ->
 assign(Idlers, [], Busy) ->
     {Busy, Idlers, []}.
 
+best(Nodes) when is_list(Nodes) ->
+    F = fun2ordering(fun(#n{h=Hs}) -> length(Hs) end),
+    node_summary(hd(lists:reverse(lists:sort(F, Nodes)))).
+
+worst(Nodes) when is_list(Nodes) ->
+    F = fun2ordering(fun(#n{h=Hs}) -> length(Hs) end),
+    node_summary(hd(lists:sort(F, Nodes))).
+
+fun2ordering(F) ->
+    fun(A, B) ->
+            F(A) =< F(B)
+    end.
+
+node_summary(#n{id=Id,perf=Perf,h=H}) ->
+    HF = lists:filter(fun(#h{res=R}) -> R == xx end, H),
+    #{id => Id, perf => Perf, done => length(H), failed => length(HF)}.
+ 
+cpu_time(Subtasks) ->
+    Sums = [ lists:sum([ CpuI || #h{cpu=CpuI} <- Hs ]) || #t{h = Hs} <- Subtasks ],
+    lists:sum(Sums).
+
+wall_time(Nodes) ->
+    Sums = [ lists:sum([ CpuI || #h{cpu=CpuI} <- Hs ]) || #n{h = Hs} <- Nodes ],
+    lists:max(Sums).
