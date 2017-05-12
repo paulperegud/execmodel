@@ -54,6 +54,7 @@ stats({Subtasks, Nodes}) ->
       finished => Finished,
       failed => length(Subtasks) - Finished,
       timeouts => length(TOs),
+      req_time => req_time(Subtasks),
       total => length(Subtasks)
      }.
 
@@ -189,7 +190,7 @@ fun2ordering(F) ->
 node_summary(#n{id=Id,perf=Perf,h=H}) ->
     HF = lists:filter(fun(#h{res=R}) -> R == xx end, H),
     #{id => Id, perf => Perf, done => length(H), failed => length(HF)}.
- 
+
 cpu_time(Subtasks) ->
     Sums = [ lists:sum([ CpuI || #h{cpu=CpuI} <- Hs ]) || #t{h = Hs} <- Subtasks ],
     lists:sum(Sums).
@@ -197,3 +198,6 @@ cpu_time(Subtasks) ->
 wall_time(Nodes) ->
     Sums = [ lists:sum([ CpuI || #h{cpu=CpuI} <- Hs ]) || #n{h = Hs} <- Nodes ],
     lists:max(Sums).
+
+req_time(Subtasks) ->
+    lists:sum([ W / 1.0 || #t{work = W} <- Subtasks ]).
