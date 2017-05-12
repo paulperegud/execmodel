@@ -1,5 +1,13 @@
 -module(model).
 
+%%% ASSUMPTIONS:
+%%% * task is embarrassingly parallel
+%%% * amount of work in each of subtasks is unknown to providers and requestor
+%%% * computational power of providers is unknown to requestor
+%%% * providers don't earn anything by timeouting subtasks
+%%% * all of the payload is distributed before the computation
+%%%   => provider can start next subtask directly after finishing previous
+
 %%%%%%%%%%%%%%%%
 %%%%% API %%%%%%
 %%%%%%%%%%%%%%%%
@@ -11,6 +19,7 @@
 -type perf() :: float().
 -type cpu_interval() :: float().
 
+%% history entry - represents an attempt of provider to compute a subtask
 -record(h, {
           id :: id(),
           perf = 0.0 :: perf(),
@@ -20,6 +29,7 @@
          }).
 -type h() :: #h{}.
 
+%% subtask
 -record(t, {
           id :: id(),
           work :: work(),
@@ -27,6 +37,7 @@
          }).
 -type t() :: #t{}.
 
+%% provider
 -record(n, {
           id :: id(),
           perf :: perf(), %% performance of the node
@@ -37,7 +48,9 @@
          }).
 -type n() :: #n{}.
 
--spec run(integer(), integer()) -> {[t()], [n()]}.
+-spec run(NS, NN) -> {[t()], [n()]} when
+      NS :: pos_integer(), %% number of subtasks
+      NN :: pos_integer(). %% number of providers
 run(NS, NN) when NN =< NS ->
     Nodes = [prov() || _ <- lists:seq(1, NN)],
     STs = [st() || _ <- lists:seq(1, NS)],
